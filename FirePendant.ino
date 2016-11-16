@@ -21,10 +21,12 @@
 #include <avr/sleep.h>      // sleep to minimize current draw
 
 #define I2C_ADDR 0x74       // I2C address of Charlieplex matrix
+#define PHOTO_PIN A1
 
 uint8_t        page = 0;    // Front/back buffer control
 const uint8_t *ptr  = anim; // Current pointer into animation data
 uint8_t        img[9 * 16]; // Buffer for rendering image
+bool           isOff = false;
 
 // UTILITY FUNCTIONS -------------------------------------------------------
 
@@ -56,6 +58,8 @@ void setup() {
   power_twi_enable();  // But switch I2C back on; need it for display
   DIDR0 = 0x0F;        // Digital input disable on A0-A3
 
+  pinMode(PHOTO_PIN, INPUT);
+
   // The Arduino Wire library runs I2C at 100 KHz by default.
   // IS31FL3731 can run at 400 KHz.  To ensure fast animation,
   // override the I2C speed settings after init...
@@ -68,7 +72,7 @@ void setup() {
   writeRegister(0);                        // Starting from first...
   for(i=0; i<13; i++) Wire.write(10 == i); // Clear all except Shutdown
   Wire.endTransmission();
-  for(p=0; p<2; p++) {                     // For each page used (0 & 1)...
+  for(p=0; p<3; p++) {                     // For each page used (0 & 1)...
     pageSelect(p);                         // Access the Frame Registers
     writeRegister(0);                      // Start from 1st LED control reg
     for(i=0; i<18; i++) Wire.write(0xFF);  // Enable all LEDs (18*8=144)
@@ -97,12 +101,65 @@ void setup() {
   // may provide nearly an extra hour of run time before battery depletes.
 }
 
+void flameOff()
+{
+    /*
+    pageSelect(0x0B);    // Function registers
+    writeRegister(0x01); // Picture Display reg
+    Wire.write(2);    // Page #
+    Wire.endTransmission();
+    isOff = true;
+    */
+    pageSelect(0x0B);    // Function registers
+    writeRegister(0x0a); // Picture Display reg
+    Wire.write(0);    // Page #
+    Wire.endTransmission();
+    isOff = true;
+}
+
+void flameOn()
+{
+    pageSelect(0x0B);    // Function registers
+    writeRegister(0x0a); // Picture Display reg
+    Wire.write(1);    // Page #
+    Wire.endTransmission();
+    isOff = false;
+}
+
 // LOOP FUNCTION - RUNS EVERY FRAME ----------------------------------------
 
 void loop() {
   uint8_t  a, x1, y1, x2, y2, x, y;
 
+  int light = 0;
+
+  power_adc_enable();
+  light = analogRead(PHOTO_PIN);
+
+  while (light < 600)
+  {
+      if (isOff == false)
+      {
+          power_twi_enable();
+          flameOff();
+          power_twi_disable();
+      }
+
+      power_adc_disable();
+      sleep_enable();
+      interrupts();
+      sleep_mode();        // Power-down MCU.
+
+      power_adc_enable();
+      light = analogRead(PHOTO_PIN);
+  }
+
+  power_adc_disable();
+
   power_twi_enable();
+
+  if (isOff) flameOn();
+
   // Datasheet recommends that I2C should be re-initialized after enable,
   // but Wire.begin() is slow.  Seems to work OK without.
 
